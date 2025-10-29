@@ -1,12 +1,8 @@
-name: Macro Analysis Agent V2 - Weekdays Only
-   # Updated: 2025-10-28
-   
-   on:
-     schedule:
-    # Run at 6:00 AM EST (11:00 UTC) Monday through Friday only  
+name: Macro Analysis Agent - Weekdays Only
+
+on:
+  schedule:
     - cron: '0 11 * * 1-5'
-  
-  # Allow manual trigger for testing
   workflow_dispatch:
 
 jobs:
@@ -37,21 +33,15 @@ jobs:
         
     - name: Run V2 macro analysis
       env:
-        # API Keys
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        
-        # Email Configuration
         EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_TO: ${{ secrets.EMAIL_TO }}
         SMTP_SERVER: smtp.gmail.com
         SMTP_PORT: 587
-        
-        # Trading Parameters
         ACCOUNT_SIZE: 10000
         RISK_PERCENTAGE: 2.0
-        
       run: |
         python production_runner.py
         
