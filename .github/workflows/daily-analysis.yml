@@ -1,4 +1,4 @@
-name: Macro Analysis Agent V2 - Weekdays Only
+name: Macro Analysis Agent - Weekdays Only
 
 on:
   schedule:
