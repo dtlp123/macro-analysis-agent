@@ -3,7 +3,8 @@
 
 # Core dependencies
 python-dotenv==1.0.0
-anthropic==0.18.1
+anthropic>=0.25.0
+httpx>=0.24.0
 
 # Data fetching
 aiohttp==3.9.1
