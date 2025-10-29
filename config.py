@@ -4,7 +4,7 @@ Configuration settings for Simple Macro Agent
 
 # Claude AI Model Configuration
 # Update this if the model name changes
-CLAUDE_MODEL = "claude-sonnet-4-20250514"  # Current working model
+CLAUDE_MODEL = "claude-sonnet-4-5-20250929"  # Current working model
 
 # Alternative models (in case of issues)
 CLAUDE_MODEL_ALTERNATIVES = [
