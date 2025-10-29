@@ -17,7 +17,7 @@ load_dotenv()
 
 # Import your V2 modules
 try:
-    from simple_macro_agent import SimpleMacroAgent
+    from main import SimpleMacroAgent
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("Make sure your V2 modules are in the root directory")
