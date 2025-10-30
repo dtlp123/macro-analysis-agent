@@ -82,25 +82,82 @@ async def run_v2_analysis():
         logger.info("🚀 Initializing Macro Agent V2...")
         agent = SimpleMacroAgent()
         
-        # Run the analysis
+        # Run the daily analysis using the correct method from main.py
         logger.info("📡 Running complete macro analysis...")
-        success = await agent.run_daily_analysis()
+        analysis = await agent.run_daily()  # This matches the method in main.py!
         
-        if success:
+        if analysis:
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
             
             logger.info("🎉 ANALYSIS COMPLETED SUCCESSFULLY!")
             logger.info(f"⏱️  Total Duration: {duration:.1f} seconds")
+            logger.info(f"📊 Signal: {analysis.get('signal', 'N/A')}")
+            logger.info(f"🎯 Confidence: {analysis.get('confidence', 'N/A')}")
+            logger.info("📧 Email sent successfully")
             logger.info("=" * 60)
             return True
         else:
-            raise Exception("Analysis returned failure status")
+            raise Exception("Analysis returned None")
             
     except Exception as e:
         logger.error(f"💥 Production run failed: {e}")
         logger.error(traceback.format_exc())
+        
+        # Try to send error notification email
+        try:
+            await send_error_notification(e)
+        except:
+            logger.error("Failed to send error notification email")
+        
         return False
+
+
+async def send_error_notification(error):
+    """Send error notification email using the same SMTP setup"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        email_from = os.getenv('EMAIL_FROM')
+        email_to = os.getenv('EMAIL_TO')
+        email_password = os.getenv('EMAIL_PASSWORD')
+        smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+        smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        
+        msg = MIMEMultipart()
+        msg['From'] = email_from
+        msg['To'] = email_to
+        msg['Subject'] = f"🚨 Macro Agent ERROR - {datetime.now().strftime('%Y-%m-%d')}"
+        
+        body = f"""
+MACRO ANALYSIS AGENT ERROR
+
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Error: {str(error)}
+
+The automated macro analysis failed to complete.
+Please check the GitHub Actions logs for more details.
+
+Traceback:
+{traceback.format_exc()}
+
+---
+This is an automated error notification from your Macro Analysis Agent V2
+"""
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(email_from, email_password)
+            server.send_message(msg)
+        
+        logger.info("✅ Error notification email sent")
+        
+    except Exception as e:
+        logger.error(f"Failed to send error notification: {e}")
 
 
 def main():
@@ -122,8 +179,12 @@ def main():
             logger.error("❌ Production run failed!")
             sys.exit(1)
             
+    except KeyboardInterrupt:
+        logger.info("⏹️  Production run interrupted")
+        sys.exit(1)
     except Exception as e:
         logger.error(f"💥 Unexpected error: {e}")
+        logger.error(traceback.format_exc())
         sys.exit(1)
 
 
