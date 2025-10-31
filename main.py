@@ -137,8 +137,16 @@ class SimpleMacroAgent:
         try:
             logger.info("Generating daily analysis...")
             
+            # Log the data we received for debugging
+            logger.info(f"Data received: Fed={data.get('fed_rate')}, "
+                       f"DXY={data.get('dxy_level')}, "
+                       f"Gold=${data.get('gold_price')}, "
+                       f"CPI={data.get('cpi')}, "
+                       f"10Y={data.get('treasury_10y')}")
+            
             # Generate signal using rule-based logic
             signal = self.signal_generator.generate_signal(data)
+            logger.info(f"Signal generated: {signal['signal']} (confidence: {signal['confidence']})")
             
             # Get AI analysis for reasoning (1 API call)
             ai_analysis = await self._get_ai_analysis(data, signal)
@@ -231,6 +239,18 @@ class SimpleMacroAgent:
                 'target': None,
                 'position_size': None,
                 'risk_amount': None
+            }
+        
+        # Validate gold price to prevent division by zero
+        if not gold_price or gold_price <= 0:
+            logger.error(f"Invalid gold price: {gold_price}. Cannot calculate trade parameters.")
+            return {
+                'entry': None,
+                'stop': None,
+                'target': None,
+                'position_size': None,
+                'risk_amount': None,
+                'error': 'Invalid gold price'
             }
         
         # Get current balance from capital manager
