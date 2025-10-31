@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 
 from data_fetcher import DataFetcher
 from signal_generator import SignalGenerator
-from capital_manager import CapitalManager
 import config
 
 # Load environment variables
@@ -62,13 +61,6 @@ class SimpleMacroAgent:
         self.data_fetcher = DataFetcher(self.fred_api_key)
         self.signal_generator = SignalGenerator(anthropic_api_key=self.anthropic_api_key)
         self.ai_client = anthropic.Anthropic(api_key=self.anthropic_api_key)
-        
-        # Initialize capital manager with configurable starting balance
-        initial_capital = float(os.getenv('INITIAL_CAPITAL', '10000'))
-        self.capital_manager = CapitalManager(initial_capital)
-        
-        # Trading parameters (now uses dynamic balance)
-        self.risk_percentage = float(os.getenv('RISK_PERCENTAGE', '2.0'))
         
         logger.info("Simple Macro Agent initialized successfully")
     
@@ -151,18 +143,11 @@ class SimpleMacroAgent:
             # Get AI analysis for reasoning (1 API call)
             ai_analysis = await self._get_ai_analysis(data, signal)
             
-            # Calculate trade parameters
-            trade_params = self._calculate_trade_parameters(
-                data.get('gold_price', 0),
-                signal['signal']
-            )
-            
             analysis = {
                 'signal': signal['signal'],
                 'bias': signal['bias'],
                 'confidence': signal['confidence'],
                 'reasoning': ai_analysis['reasoning'],
-                'trade_params': trade_params,
                 'data': data,
                 'timestamp': datetime.now().isoformat()
             }
@@ -230,59 +215,6 @@ class SimpleMacroAgent:
                 'api_calls_used': 0
             }
     
-    def _calculate_trade_parameters(self, gold_price: float, signal: str) -> Dict:
-        """Calculate entry, stop loss, and position size using current balance"""
-        if signal == "WAIT":
-            return {
-                'entry': None,
-                'stop': None,
-                'target': None,
-                'position_size': None,
-                'risk_amount': None
-            }
-        
-        # Validate gold price to prevent division by zero
-        if not gold_price or gold_price <= 0:
-            logger.error(f"Invalid gold price: {gold_price}. Cannot calculate trade parameters.")
-            return {
-                'entry': None,
-                'stop': None,
-                'target': None,
-                'position_size': None,
-                'risk_amount': None,
-                'error': 'Invalid gold price'
-            }
-        
-        # Get current balance from capital manager
-        current_balance = self.capital_manager.get_current_balance()
-        
-        # Simple trade parameters
-        entry = round(gold_price, 2)
-        
-        # 1% stop loss
-        stop_distance = gold_price * 0.01
-        stop = round(entry - stop_distance, 2) if signal == "LONG" else round(entry + stop_distance, 2)
-        
-        # 2:1 risk-reward ratio
-        target_distance = stop_distance * 2
-        target = round(entry + target_distance, 2) if signal == "LONG" else round(entry - target_distance, 2)
-        
-        # Dynamic position sizing based on current balance
-        position_size = self.capital_manager.calculate_position_size(
-            stop_distance, 
-            self.risk_percentage
-        )
-        risk_amount = current_balance * (self.risk_percentage / 100)
-        
-        return {
-            'entry': entry,
-            'stop': stop,
-            'target': target,
-            'position_size': round(position_size, 2),
-            'risk_amount': risk_amount,
-            'account_balance': current_balance
-        }
-    
     def send_daily_email(self, analysis: Dict):
         """Send plain text email with analysis"""
         try:
@@ -301,68 +233,41 @@ class SimpleMacroAgent:
             raise
     
     def _build_email_body(self, analysis: Dict) -> str:
-        """Build plain text email body with dynamic balance"""
+        """Build clean email body with just signal and analysis"""
         data = analysis['data']
-        trade = analysis['trade_params']
         
-        # Get current account stats
-        stats = self.capital_manager.get_statistics()
-        current_balance = stats['current_balance']
-        total_return = stats['total_return_pct']
-        win_rate = stats['win_rate']
+        # Determine DXY strength
+        dxy_level = data.get('dxy_level', 0)
+        if dxy_level > 105:
+            dxy_status = 'Strong'
+        elif dxy_level < 100:
+            dxy_status = 'Weak'
+        else:
+            dxy_status = 'Neutral'
         
         body = f"""
-ACCOUNT STATUS
-Current Balance: ${current_balance:,.2f} ({total_return:+.1f}% return)
-Win Rate: {win_rate:.1f}% ({stats['winning_trades']}W/{stats['losing_trades']}L)
+DAILY GOLD MACRO ANALYSIS
+{datetime.now().strftime('%A, %B %d, %Y')}
+
+SIGNAL: {analysis['signal']}
+Confidence: {analysis['confidence']}
 
 MACRO ENVIRONMENT
-Fed Environment: {data.get('fed_rate')}% - {analysis['bias']} assessment
-DXY Status: {data.get('dxy_level')} - {'Strong' if data.get('dxy_level', 0) > 105 else 'Weak' if data.get('dxy_level', 0) < 100 else 'Neutral'} vs gold
+• Fed Funds Rate: {data.get('fed_rate')}%
+• Fed Bias: {analysis['bias']}
+• DXY Level: {dxy_level} ({dxy_status} vs gold)
+• Gold Price: ${data.get('gold_price'):,.2f}
+• 10Y Treasury: {data.get('treasury_10y')}%
+• Latest CPI: {data.get('cpi')}%
 
-Signal: {analysis['signal']}
-Reasoning: {analysis['reasoning']}
-"""
-        
-        if analysis['signal'] != "WAIT":
-            position_value = trade['entry'] * trade['position_size']
-            body += f"""
-TRADE PARAMETERS
-Entry: ${trade['entry']}
-Stop: ${trade['stop']}
-Target: ${trade['target']}
-Position Size: {trade['position_size']} units (${position_value:,.2f} value)
-Risk: {self.risk_percentage}% account (${trade['risk_amount']:.0f} on ${current_balance:,.0f} account)
-"""
-        
-        # Add recent performance if there are trades
-        if stats['total_trades'] > 0:
-            body += f"""
-RECENT PERFORMANCE
-Last 5 trades: {self._get_recent_trade_summary()}
-Max Drawdown: {stats['drawdown']:.1f}%
-"""
-        
-        body += f"""
+ANALYSIS
+{analysis['reasoning']}
+
 ---
-System confidence: {analysis['confidence']}
 Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
         
         return body
-    
-    def _get_recent_trade_summary(self) -> str:
-        """Get summary of recent trades for email"""
-        recent = self.capital_manager.get_recent_trades(5)
-        if not recent:
-            return "No trades yet"
-        
-        summary = []
-        for trade in recent:
-            result = "W" if trade.get('pnl', 0) > 0 else "L"
-            summary.append(result)
-        
-        return " ".join(summary)
     
     def _send_email(self, subject: str, body: str):
         """Send email via SMTP"""
