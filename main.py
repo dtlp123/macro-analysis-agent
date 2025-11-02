@@ -218,7 +218,12 @@ class SimpleMacroAgent:
     def send_daily_email(self, analysis: Dict):
         """Send plain text email with analysis"""
         try:
-            subject = f"Gold Signal - {datetime.now().strftime('%Y-%m-%d')} - {analysis['signal']}"
+            # Add warning indicator to subject if data issues
+            data = analysis.get('data', {})
+            has_warnings = data.get('has_warnings', False)
+            warning_flag = " ⚠️" if has_warnings else ""
+            
+            subject = f"Gold Signal - {datetime.now().strftime('%Y-%m-%d')} - {analysis['signal']}{warning_flag}"
             
             # Build email body
             body = self._build_email_body(analysis)
@@ -248,7 +253,17 @@ class SimpleMacroAgent:
         body = f"""
 DAILY GOLD MACRO ANALYSIS
 {datetime.now().strftime('%A, %B %d, %Y')}
-
+"""
+        
+        # Add data warnings section if there are any
+        warnings = data.get('warnings', [])
+        if warnings:
+            body += "\n⚠️  DATA WARNINGS:\n"
+            for warning in warnings:
+                body += f"• {warning}\n"
+            body += "\n"
+        
+        body += f"""
 SIGNAL: {analysis['signal']}
 Confidence: {analysis['confidence']}
 
