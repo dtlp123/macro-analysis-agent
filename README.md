@@ -4,24 +4,23 @@ A minimalist macro analysis system that generates daily gold trading signals bas
 
 ## 🎯 Core Philosophy
 
-**Less is more.** This system uses only 5 data points and simple if/then logic to replicate a proven manual trading edge:
+**Less is more.** This system uses only 4 data points and simple if/then logic to replicate a proven manual trading edge:
 - Fed policy drives gold over weeks/months
 - Strong dollar usually overrides other factors  
 - Simple directional bias beats complex analysis
 
 ## 📊 Features
 
-### Dynamic Capital Management ✨ NEW!
-- **Automatic Balance Tracking**: Position sizes adjust as your account grows/shrinks
-- **Trade Recording**: Log wins/losses to update balance automatically
-- **Performance Statistics**: Track win rate, drawdown, and returns
-- **Manual Adjustments**: Add deposits, withdrawals, or corrections anytime
-
 ### Signal Generation
-- **Daily Analysis**: Runs at 8 AM Sydney time
+- **Daily Analysis**: Runs at 8 AM Sydney time (weekdays only)
 - **Simple Logic**: Fed rate + DXY = Clear signal
-- **Risk Management**: 2% risk per trade (configurable)
 - **Email Delivery**: Plain text signals to your inbox
+- **AI Enhancement**: Claude AI provides reasoning and context
+
+### Data Sources
+- **FRED API**: Federal Funds Rate, 10Y Treasury, CPI
+- **Yahoo Finance**: DXY (US Dollar Index)
+- **Note**: Gold price data temporarily unavailable - awaiting more accurate API source
 
 ## 🚀 Quick Start
 
@@ -39,114 +38,86 @@ cp .env.template .env
 # Edit .env with your API keys
 ```
 
-### 2. Initial Setup
+### 2. Configuration
+Edit `.env` file with your credentials:
 ```bash
-# Test the system
+# API Keys
+FRED_API_KEY=your_fred_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+
+# Email Settings
+EMAIL_FROM=your.email@gmail.com
+EMAIL_TO=recipient@gmail.com
+EMAIL_PASSWORD=your_app_password
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+```
+
+### 3. Test Run
+```bash
+# Test the system locally
 python run_once.py
-
-# Set your starting capital (interactive)
-python trade_manager.py
-# Select option 2 → Set new balance → Enter your amount
 ```
 
-### 3. Daily Operation
-```bash
-# Run the agent (will execute daily at 8 AM)
-python simple_macro_agent.py
-```
-
-## 💰 Capital Management
-
-### Recording Trades
-After each trade closes, update your balance:
-
-```bash
-python trade_manager.py
-```
-
-Select option 1 (Record Trade) and enter:
-- Signal taken (LONG/SHORT)
-- Entry and exit prices
-- Position size
-- The system calculates P&L automatically
-
-### Viewing Performance
-```bash
-python trade_manager.py
-```
-- Option 3: View statistics (win rate, drawdown, returns)
-- Option 4: View recent trades
-- Option 5: Export full performance report
-
-### Adding/Withdrawing Funds
-```bash
-python trade_manager.py
-```
-- Option 2: Update balance
-- Choose deposit, withdrawal, or set new balance
+### 4. Deploy
+The system runs automatically via GitHub Actions:
+- **Schedule**: Weekdays at 11 PM UTC (8 AM Sydney)
+- **Manual trigger**: Available via GitHub Actions UI
+- **Setup**: Add all environment variables as GitHub Secrets
 
 ## 📧 Daily Email Format
 
 ```
-ACCOUNT STATUS
-Current Balance: $10,500.00 (+5.0% return)
-Win Rate: 60.0% (3W/2L)
+DAILY GOLD MACRO ANALYSIS
+Monday, November 04, 2025
+
+SIGNAL: LONG
+Confidence: High
 
 MACRO ENVIRONMENT
-Fed Environment: 5.25% - Hawkish assessment
-DXY Status: 106.5 - Strong vs gold
+• Fed Funds Rate: 4.75%
+• Fed Bias: Dovish
+• DXY Level: 102.5 (Neutral vs gold)
+• 10Y Treasury: 4.2%
+• Latest CPI: 2.8%
 
-Signal: SHORT
-Reasoning: Fed remains hawkish at 5.25% with DXY strength at 106.5 
-confirming dollar dominance. This combination typically pressures gold lower.
+ANALYSIS
+The Fed's dovish pivot at 4.75% creates a favorable environment 
+for gold as real rates decline. The neutral DXY at 102.5 removes 
+the dollar headwind that previously capped gold rallies. Key risk 
+to monitor is unexpected economic data strength that could delay 
+Fed easing.
 
-TRADE PARAMETERS
-Entry: $1,950.00
-Stop: $1,969.50
-Target: $1,911.00
-Position Size: 10.8 units ($21,060 value)
-Risk: 2% account ($210 on $10,500 account)
+---
+Last updated: 2025-11-04 08:00:15
 
-RECENT PERFORMANCE
-Last 5 trades: W W L W L
-Max Drawdown: 4.2%
+Note: Gold price data temporarily unavailable - awaiting more accurate API source.
 ```
 
 ## 📁 File Structure
 
 ```
 macro-analysis-agent/
-├── simple_macro_agent.py    # Main controller
-├── data_fetcher.py          # FRED & Yahoo data
-├── signal_generator.py      # Fed + DXY logic
-├── capital_manager.py       # Balance & trade tracking
-├── trade_manager.py         # CLI for recording trades
-├── run_once.py             # Test script
-├── capital_data.json       # Your balance & history (auto-created)
-├── data_snapshots/         # Daily data backups
-└── .env                    # Your configuration
-```
-
-## 🔧 Configuration
-
-Edit `.env` file:
-```bash
-# Starting balance (can change anytime)
-INITIAL_CAPITAL=25000
-
-# Risk per trade (% of current balance)
-RISK_PERCENTAGE=1.5
-
-# Email settings
-EMAIL_TO=your.email@gmail.com
+├── main.py                      # Main orchestrator
+├── data_fetcher.py             # FRED & Yahoo data retrieval
+├── signal_generator.py         # Fed + DXY logic
+├── config.py                   # Configuration settings
+├── production_runner.py        # GitHub Actions entry point
+├── run_once.py                # Local testing script
+├── data_snapshots/            # Daily data backups (auto-created)
+├── .github/workflows/         # GitHub Actions automation
+│   └── daily-analysis.yml
+├── requirements.txt           # Python dependencies
+├── .env                      # Your configuration (not in git)
+└── .gitignore               # Git exclusions
 ```
 
 ## 📈 Signal Logic
 
 ### Fed Policy Assessment
-- **Above 5%** → Bearish gold bias
-- **3-5%** → Neutral, watch DXY
-- **Below 3%** → Bullish gold bias
+- **Above 5%** → Hawkish (bearish gold bias)
+- **3-5%** → Neutral (watch DXY)
+- **Below 3%** → Dovish (bullish gold bias)
 
 ### DXY Confirmation
 - **>105** → Strong dollar (bearish gold)
@@ -162,36 +133,41 @@ EMAIL_TO=your.email@gmail.com
 
 ## 💵 Costs
 
-- **FRED API**: Free
+- **FRED API**: Free (500 calls/day limit)
 - **Yahoo Finance**: Free
 - **Claude AI**: ~$10-15/month (1 call/day)
+- **GitHub Actions**: Free (public repo)
 - **Total**: Under $20/month
 
-## 🔒 Data Security
+## 🔒 Security
 
-- Capital data stored locally in `capital_data.json`
-- Automatic backups before any reset
-- No external database required
-- All data under your control
+- All sensitive data in `.env` file (not committed)
+- GitHub Secrets for production environment
+- API keys never logged or exposed
+- Local data storage only
 
 ## 📝 Maintenance
 
+### Daily Tasks
+- Review email signals
+- Check for any error notifications
+
 ### Weekly Tasks
-- Record closed trades via `trade_manager.py`
-- Review performance statistics
-- Verify email delivery
+- Review GitHub Actions logs
+- Verify all emails delivered successfully
 
 ### Monthly Tasks
-- Export performance report
-- Review signal accuracy vs manual decisions
-- Adjust risk percentage if needed
+- Review signal accuracy
+- Check API usage and costs
+- Update fallback values in config.py if needed
 
 ## ⚠️ Important Notes
 
-1. **Paper Trade First**: Test for 4-8 weeks before live trading
-2. **Record All Trades**: Keep the system updated for accurate position sizing
-3. **Manual Override**: You can always skip signals you don't agree with
-4. **Backup Data**: The `capital_data.json` file contains your history - back it up!
+1. **Paper Trade First**: Test signals for 4-8 weeks before live trading
+2. **Manual Override**: Always apply your own judgment to signals
+3. **Data Quality**: System includes fallback values for API failures
+4. **Weekdays Only**: Runs Monday-Friday, skips weekends
+5. **Gold Price**: Temporarily unavailable until better API source found
 
 ## 🚨 Troubleshooting
 
@@ -199,30 +175,66 @@ EMAIL_TO=your.email@gmail.com
 - Check spam folder
 - Verify SMTP settings in `.env`
 - For Gmail, use app-specific password
+- Check GitHub Actions logs for errors
 
-### Wrong balance showing?
-- Run `python trade_manager.py`
-- Option 2 → Set new balance
+### Data fetch errors?
+- Check FRED API key is valid
+- Verify internet connectivity
+- System uses fallback values automatically
+- Check `macro_agent.log` for details
 
-### Need to start over?
-- Run `python trade_manager.py`
-- Option 6 → Reset account (creates backup first)
+### GitHub Actions failing?
+- Verify all secrets are set correctly
+- Check workflow file syntax
+- Review Actions logs in repository
+- Ensure Python version matches (3.9+)
 
 ## 📊 Success Metrics
 
 Target performance after 3 months:
 - **Signal Frequency**: 3-5 trades/month
-- **Win Rate**: >50%
-- **Risk-Reward**: 1:2 minimum
-- **Max Drawdown**: <10%
-- **Time Saved**: 30+ minutes/day
+- **Signal Quality**: Clear directional bias
+- **System Uptime**: >95%
+- **Email Delivery**: 100%
+- **Time Saved**: 30+ minutes/day vs manual analysis
 
 ## 🎯 Philosophy Reminder
 
 > "The system replicates your existing manual trading edge with less daily time investment. If it doesn't improve upon your current approach within 8 weeks, abandon the project rather than adding complexity."
 
-Keep it simple. Let it run. Record your trades. Trust the process.
+Keep it simple. Let it run. Trust the process.
+
+## 🔧 Development
+
+### Running Locally
+```bash
+# Single test run
+python run_once.py
+
+# Continuous scheduler (for testing)
+python main.py
+```
+
+### Adding Features
+When considering new features, ask:
+1. Does it improve signal quality?
+2. Does it reduce manual work?
+3. Does it maintain simplicity?
+
+If no to any of these, don't add it.
+
+## 📖 Documentation
+
+For detailed technical documentation including:
+- Architecture diagrams
+- Function specifications
+- Data flow details
+- Configuration options
+
+See: `Macro_Agent_Documentation.docx`
 
 ---
 
 For support, check the logs in `macro_agent.log` or run `python run_once.py` for testing.
+
+**Remember**: Simple systems that execute consistently beat complex systems that don't.

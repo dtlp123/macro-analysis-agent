@@ -25,19 +25,19 @@ except ImportError:
         'fed_rate': 5.25,
         'treasury_10y': 4.3,
         'cpi': 3.0,
-        'gold_price': 2050.0,
         'dxy_level': 103.5
     }
 
 
 class DataFetcher:
     """
-    Fetches only the 5 essential data points needed for gold signal generation:
+    Fetches only the 4 essential data points needed for gold signal generation:
     1. Fed Funds Rate (FRED)
     2. 10Y Treasury Yield (FRED)
     3. Latest CPI (FRED)
-    4. Gold Price (Yahoo Finance)
-    5. DXY Level (Yahoo Finance)
+    4. DXY Level (Yahoo Finance)
+    
+    Note: Gold price fetching removed - waiting for more accurate API source
     """
     
     def __init__(self, fred_api_key: str):
@@ -65,7 +65,7 @@ class DataFetcher:
             await self.session.close()
     
     async def get_all_data(self) -> Dict:
-        """Fetch all 5 essential data points with error tracking"""
+        """Fetch all 4 essential data points with error tracking"""
         try:
             await self.initialize()
             
@@ -87,10 +87,6 @@ class DataFetcher:
                 warnings.append(cpi_warning)
             
             # Fetch market data with error tracking
-            gold_price, gold_warning = self.get_gold_price_with_status()
-            if gold_warning:
-                warnings.append(gold_warning)
-            
             dxy_level, dxy_warning = self.get_dxy_level_with_status()
             if dxy_warning:
                 warnings.append(dxy_warning)
@@ -99,7 +95,6 @@ class DataFetcher:
                 'fed_rate': fed_rate,
                 'treasury_10y': treasury_10y,
                 'cpi': cpi,
-                'gold_price': gold_price,
                 'dxy_level': dxy_level,
                 'timestamp': datetime.now().isoformat(),
                 'warnings': warnings,  # Track all warnings
@@ -112,8 +107,7 @@ class DataFetcher:
                     logger.warning(f"  - {warning}")
             else:
                 logger.info(f"All data fetched successfully: Fed={fed_rate}%, "
-                           f"10Y={treasury_10y}%, CPI={cpi}%, "
-                           f"Gold=${gold_price}, DXY={dxy_level}")
+                           f"10Y={treasury_10y}%, CPI={cpi}%, DXY={dxy_level}")
             
             return data
             
@@ -243,77 +237,12 @@ class DataFetcher:
             warning = f"CPI calculation failed ({str(e)}), using fallback: {DEFAULT_VALUES['cpi']}%"
             return DEFAULT_VALUES['cpi'], warning
     
-    def get_gold_price(self) -> float:
-        """Get current gold price from Yahoo Finance with multiple ticker attempts"""
-        # Try multiple gold tickers in order of preference
-        gold_tickers = [
-            "GLD",      # SPDR Gold ETF (most liquid, always available)
-            "GC=F",     # Gold futures (might have issues)
-        ]
-        
-        for ticker in gold_tickers:
-            try:
-                time.sleep(YAHOO_DELAY)  # Add delay to avoid rate limits
-                
-                logger.debug(f"Trying gold ticker: {ticker}")
-                data = yf.download(ticker, period="5d", interval="1d", progress=False)
-                
-                if not data.empty and len(data) > 0:
-                    price = float(data['Close'].iloc[-1])
-                    
-                    # Adjust for GLD (ETF is ~1/10th of gold price)
-                    if ticker == "GLD":
-                        price = price * 10  # Approximate conversion
-                    # Adjust for GOLD (Barrick stock, use multiplier)
-                    elif ticker == "GOLD":
-                        price = price * 100  # Very rough approximation
-                    
-                    logger.info(f"Gold price from {ticker}: ${price:.2f}")
-                    return round(price, 2)
-                    
-            except Exception as e:
-                logger.warning(f"Failed to fetch {ticker}: {e}")
-                continue
-        
-        # If all fail, use fallback
-        logger.warning("All gold tickers failed, using fallback value")
-        return DEFAULT_VALUES['gold_price']
-    
-    def get_gold_price_with_status(self) -> tuple[float, Optional[str]]:
-        """Get gold price with error status"""
-        gold_tickers = ["GLD", "GC=F"]
-        
-        for ticker in gold_tickers:
-            try:
-                time.sleep(YAHOO_DELAY)
-                logger.debug(f"Trying gold ticker: {ticker}")
-                data = yf.download(ticker, period="5d", interval="1d", progress=False)
-                
-                if not data.empty and len(data) > 0:
-                    price = float(data['Close'].iloc[-1])
-                    
-                    if ticker == "GLD":
-                        price = price * 10
-                    elif ticker == "GOLD":
-                        price = price * 100
-                    
-                    logger.info(f"Gold price from {ticker}: ${price:.2f}")
-                    return round(price, 2), None
-                    
-            except Exception as e:
-                logger.warning(f"Failed to fetch {ticker}: {e}")
-                continue
-        
-        warning = f"Gold price unavailable (Yahoo Finance timeout/error), using fallback: ${DEFAULT_VALUES['gold_price']}"
-        logger.warning(warning)
-        return DEFAULT_VALUES['gold_price'], warning
-    
     def get_dxy_level(self) -> float:
         """Get current DXY level from Yahoo Finance with multiple ticker attempts"""
         # Try multiple USD index tickers
         dxy_tickers = [
-            "DXY",       # Try simple DXY first
             "DX-Y.NYB",  # Full ticker
+            "DXY",       # Try simple DXY first
             "UUP",       # USD ETF as proxy
             "USDU",      # Another USD ETF
         ]
@@ -347,7 +276,7 @@ class DataFetcher:
     
     def get_dxy_level_with_status(self) -> tuple[float, Optional[str]]:
         """Get DXY level with error status"""
-        dxy_tickers = ["DXY", "DX-Y.NYB", "UUP", "USDU"]
+        dxy_tickers = ["DX-Y.NYB", "DXY", "UUP", "USDU"]
         
         for ticker in dxy_tickers:
             try:
@@ -402,11 +331,6 @@ class FREDConnector:
 
 class YahooConnector:
     """Simplified Yahoo Finance connector for backwards compatibility"""
-    
-    @staticmethod
-    def get_gold_price() -> float:
-        fetcher = DataFetcher("")
-        return fetcher.get_gold_price()
     
     @staticmethod
     def get_dxy_level() -> float:

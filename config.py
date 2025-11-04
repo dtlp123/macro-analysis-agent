@@ -25,17 +25,12 @@ RETRY_DELAY = 2  # Seconds between retries
 
 # Default fallback values
 DEFAULT_VALUES = {
-    'fed_rate': 0,    # Current approximate Fed rate
-    'treasury_10y': 0,  # Current approximate 10Y yield
-    'cpi': 0,          # Current approximate CPI
-    'gold_price': 0, # Current approximate gold price
-    'dxy_level': 0   # Current approximate DXY level
+    'fed_rate': 5.25,      # Current approximate Fed rate
+    'treasury_10y': 4.5,   # Current approximate 10Y yield
+    'cpi': 3.0,            # Current approximate CPI
+    'dxy_level': 106.0     # Current approximate DXY level
 }
 
 # Email settings
 EMAIL_SUBJECT_PREFIX = "Gold Signal"
 EMAIL_TIME_SYDNEY = "08:00"  # 8 AM Sydney time
-
-# Trading parameters
-DEFAULT_STOP_LOSS_PERCENT = 1.0  # 1% stop loss
-DEFAULT_RISK_REWARD_RATIO = 2.0  # 2:1 risk-reward
