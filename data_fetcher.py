@@ -1,6 +1,6 @@
 """
 Data Fetcher Module
-Handles FRED API and Yahoo Finance data retrieval
+Handles FRED API and Yahoo Finance data retrieval with enhanced GitHub Actions support
 """
 
 import asyncio
@@ -8,7 +8,6 @@ import aiohttp
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional
-import yfinance as yf
 import pandas as pd
 import time
 
@@ -19,8 +18,12 @@ try:
     import config
     YAHOO_DELAY = config.YAHOO_RATE_LIMIT_DELAY
     DEFAULT_VALUES = config.DEFAULT_VALUES
+    MAX_RETRIES = config.MAX_RETRIES
+    RETRY_DELAY = config.RETRY_DELAY
 except ImportError:
-    YAHOO_DELAY = 1.5
+    YAHOO_DELAY = 2.0  # Increased delay for GitHub Actions
+    MAX_RETRIES = 5
+    RETRY_DELAY = 3
     DEFAULT_VALUES = {
         'fed_rate': 5.25,
         'treasury_10y': 4.3,
@@ -37,7 +40,7 @@ class DataFetcher:
     3. Latest CPI (FRED)
     4. DXY Level (Yahoo Finance)
     
-    Note: Gold price fetching removed - waiting for more accurate API source
+    Enhanced with better error handling for GitHub Actions environment.
     """
     
     def __init__(self, fred_api_key: str):
@@ -86,8 +89,8 @@ class DataFetcher:
             if cpi_warning:
                 warnings.append(cpi_warning)
             
-            # Fetch market data with error tracking
-            dxy_level, dxy_warning = self.get_dxy_level_with_status()
+            # Fetch market data with error tracking and retries
+            dxy_level, dxy_warning = await self.get_dxy_level_with_status_async()
             if dxy_warning:
                 warnings.append(dxy_warning)
             
@@ -97,7 +100,7 @@ class DataFetcher:
                 'cpi': cpi,
                 'dxy_level': dxy_level,
                 'timestamp': datetime.now().isoformat(),
-                'warnings': warnings,  # Track all warnings
+                'warnings': warnings,
                 'has_warnings': len(warnings) > 0
             }
             
@@ -237,71 +240,116 @@ class DataFetcher:
             warning = f"CPI calculation failed ({str(e)}), using fallback: {DEFAULT_VALUES['cpi']}%"
             return DEFAULT_VALUES['cpi'], warning
     
-    def get_dxy_level(self) -> float:
-        """Get current DXY level from Yahoo Finance with multiple ticker attempts"""
-        # Try multiple USD index tickers
-        dxy_tickers = [
-            "DX-Y.NYB",  # Full ticker
-            "DXY",       # Try simple DXY first
-            "UUP",       # USD ETF as proxy
-            "USDU",      # Another USD ETF
+    async def get_dxy_level_with_status_async(self) -> tuple[float, Optional[str]]:
+        """
+        Get DXY level asynchronously with enhanced retry logic for GitHub Actions.
+        Uses aiohttp instead of yfinance for better timeout control.
+        """
+        dxy_sources = [
+            {
+                'name': 'Yahoo Finance API',
+                'url': 'https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB',
+                'params': {'interval': '1d', 'range': '5d'},
+                'parser': self._parse_yahoo_api_response
+            },
+            {
+                'name': 'Yahoo Finance API (DXY)',
+                'url': 'https://query1.finance.yahoo.com/v8/finance/chart/DXY',
+                'params': {'interval': '1d', 'range': '5d'},
+                'parser': self._parse_yahoo_api_response
+            }
         ]
         
-        for ticker in dxy_tickers:
-            try:
-                time.sleep(YAHOO_DELAY)  # Add delay to avoid rate limits
+        for attempt in range(MAX_RETRIES):
+            for source in dxy_sources:
+                try:
+                    logger.info(f"Attempt {attempt + 1}/{MAX_RETRIES}: Trying {source['name']}")
+                    
+                    # Add delay between attempts
+                    if attempt > 0:
+                        await asyncio.sleep(RETRY_DELAY * attempt)
+                    
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/json',
+                        'Accept-Language': 'en-US,en;q=0.9'
+                    }
+                    
+                    timeout = aiohttp.ClientTimeout(total=30, connect=10)
+                    
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(
+                            source['url'],
+                            params=source['params'],
+                            headers=headers
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                level = source['parser'](data)
+                                
+                                if level is not None:
+                                    logger.info(f"DXY level from {source['name']}: {level:.2f}")
+                                    return round(level, 2), None
+                            else:
+                                logger.warning(f"{source['name']} returned status {response.status}")
                 
-                logger.debug(f"Trying DXY ticker: {ticker}")
-                data = yf.download(ticker, period="5d", interval="1d", progress=False)
+                except asyncio.TimeoutError:
+                    logger.warning(f"{source['name']} timed out (attempt {attempt + 1})")
+                except Exception as e:
+                    logger.warning(f"{source['name']} failed: {str(e)[:100]}")
                 
-                if not data.empty and len(data) > 0:
-                    level = float(data['Close'].iloc[-1])
-                    
-                    # Adjust for ETFs (they track DXY but at different scales)
-                    if ticker == "UUP":
-                        level = level * 3.7  # UUP to DXY approximate conversion
-                    elif ticker == "USDU":
-                        level = level * 3.9  # USDU to DXY approximate conversion
-                    
-                    logger.info(f"DXY level from {ticker}: {level:.2f}")
-                    return round(level, 2)
-                    
-            except Exception as e:
-                logger.warning(f"Failed to fetch {ticker}: {e}")
-                continue
+                # Small delay between different sources
+                await asyncio.sleep(1)
         
-        # If all fail, use fallback
-        logger.warning("All DXY tickers failed, using fallback value")
-        return DEFAULT_VALUES['dxy_level']
-    
-    def get_dxy_level_with_status(self) -> tuple[float, Optional[str]]:
-        """Get DXY level with error status"""
-        dxy_tickers = ["DX-Y.NYB", "DXY", "UUP", "USDU"]
-        
-        for ticker in dxy_tickers:
-            try:
-                time.sleep(YAHOO_DELAY)
-                logger.debug(f"Trying DXY ticker: {ticker}")
-                data = yf.download(ticker, period="5d", interval="1d", progress=False)
-                
-                if not data.empty and len(data) > 0:
-                    level = float(data['Close'].iloc[-1])
-                    
-                    if ticker == "UUP":
-                        level = level * 3.7
-                    elif ticker == "USDU":
-                        level = level * 3.9
-                    
-                    logger.info(f"DXY level from {ticker}: {level:.2f}")
-                    return round(level, 2), None
-                    
-            except Exception as e:
-                logger.warning(f"Failed to fetch {ticker}: {e}")
-                continue
-        
-        warning = f"DXY level unavailable (Yahoo Finance timeout/error), using fallback: {DEFAULT_VALUES['dxy_level']}"
-        logger.warning(warning)
+        # All attempts failed, use fallback
+        warning = f"DXY level unavailable (all sources failed after {MAX_RETRIES} attempts), using fallback: {DEFAULT_VALUES['dxy_level']}"
+        logger.error(warning)
         return DEFAULT_VALUES['dxy_level'], warning
+    
+    def _parse_yahoo_api_response(self, data: dict) -> Optional[float]:
+        """Parse Yahoo Finance API response to extract DXY level"""
+        try:
+            chart = data.get('chart', {})
+            result = chart.get('result', [])
+            
+            if result and len(result) > 0:
+                indicators = result[0].get('indicators', {})
+                quote = indicators.get('quote', [])
+                
+                if quote and len(quote) > 0:
+                    close_prices = quote[0].get('close', [])
+                    
+                    # Get the most recent non-null close price
+                    for price in reversed(close_prices):
+                        if price is not None:
+                            return float(price)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error parsing Yahoo API response: {e}")
+            return None
+    
+    # Keep synchronous version for backwards compatibility
+    def get_dxy_level_with_status(self) -> tuple[float, Optional[str]]:
+        """Synchronous wrapper for async DXY fetching"""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If called from async context, create new loop
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        self.get_dxy_level_with_status_async()
+                    )
+                    return future.result(timeout=60)
+            else:
+                return asyncio.run(self.get_dxy_level_with_status_async())
+        except Exception as e:
+            logger.error(f"Error in synchronous DXY wrapper: {e}")
+            warning = f"DXY fetch failed: {str(e)}, using fallback: {DEFAULT_VALUES['dxy_level']}"
+            return DEFAULT_VALUES['dxy_level'], warning
 
 
 class FREDConnector:
@@ -335,4 +383,5 @@ class YahooConnector:
     @staticmethod
     def get_dxy_level() -> float:
         fetcher = DataFetcher("")
-        return fetcher.get_dxy_level()
+        level, _ = fetcher.get_dxy_level_with_status()
+        return level

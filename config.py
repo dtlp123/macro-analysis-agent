@@ -16,12 +16,12 @@ CLAUDE_MODEL_ALTERNATIVES = [
    "claude-3-haiku-20240307"
 ]
 
-# Yahoo Finance Settings
-YAHOO_RATE_LIMIT_DELAY = 1.5  # Seconds between Yahoo requests to avoid 429 errors
+# Yahoo Finance Settings (Enhanced for GitHub Actions)
+YAHOO_RATE_LIMIT_DELAY = 2.0  # Increased for GitHub Actions reliability
 
-# Data fetch retries
-MAX_RETRIES = 3
-RETRY_DELAY = 2  # Seconds between retries
+# Data fetch retries (Increased for GitHub Actions environment)
+MAX_RETRIES = 5  # Try 5 times before giving up
+RETRY_DELAY = 3  # Wait 3 seconds between retries (increases with each attempt)
 
 # Default fallback values
 DEFAULT_VALUES = {
@@ -34,3 +34,7 @@ DEFAULT_VALUES = {
 # Email settings
 EMAIL_SUBJECT_PREFIX = "Gold Signal"
 EMAIL_TIME_SYDNEY = "08:00"  # 8 AM Sydney time
+
+# Network timeout settings (for GitHub Actions)
+NETWORK_TIMEOUT_SECONDS = 30
+NETWORK_CONNECT_TIMEOUT_SECONDS = 10
