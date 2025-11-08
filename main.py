@@ -1,338 +1,375 @@
 """
-Data Fetcher Module
-Handles FRED API and Yahoo Finance data retrieval
+Simple Macro Analysis Agent for Gold Trading
+Focused on Fed Policy + DXY correlation signals
 """
 
-import asyncio
-import aiohttp
+import os
+import json
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Optional
-import yfinance as yf
-import pandas as pd
-import time
+import asyncio
+from datetime import datetime, time
+from typing import Dict, Optional, Tuple
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
+import anthropic
+from dotenv import load_dotenv
+
+from data_fetcher import DataFetcher
+from signal_generator import SignalGenerator
+import config
+
+# Load environment variables
+load_dotenv()
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('macro_agent.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
-# Import config for rate limits and defaults
-try:
-    import config
-    YAHOO_DELAY = config.YAHOO_RATE_LIMIT_DELAY
-    DEFAULT_VALUES = config.DEFAULT_VALUES
-except ImportError:
-    YAHOO_DELAY = 1.5
-    DEFAULT_VALUES = {
-        'fed_rate': 5.25,
-        'treasury_10y': 4.3,
-        'cpi': 3.0,
-        'dxy_level': 103.5
-    }
 
-
-class DataFetcher:
+class SimpleMacroAgent:
     """
-    Fetches only the 4 essential data points needed for gold signal generation:
-    1. Fed Funds Rate (FRED)
-    2. 10Y Treasury Yield (FRED)
-    3. Latest CPI (FRED)
-    4. DXY Level (Yahoo Finance)
-    
-    Note: Gold price fetching removed - waiting for more accurate API source
+    Minimal macro analysis agent for gold trading signals.
+    Daily analysis of Fed policy + DXY to generate LONG/SHORT/WAIT signals.
     """
     
-    def __init__(self, fred_api_key: str):
-        self.fred_api_key = fred_api_key
-        self.fred_base_url = "https://api.stlouisfed.org/fred"
-        self.session: Optional[aiohttp.ClientSession] = None
+    def __init__(self):
+        """Initialize the agent with minimal required components"""
+        # API Keys
+        self.fred_api_key = os.getenv('FRED_API_KEY')
+        self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
         
-        # FRED series IDs
-        self.fred_series = {
-            'fed_funds': 'DFF',        # Federal Funds Rate
-            'treasury_10y': 'GS10',     # 10-Year Treasury
-            'cpi': 'CPIAUCSL'          # CPI All Urban Consumers
-        }
+        # Email Configuration
+        self.email_from = os.getenv('EMAIL_FROM')
+        self.email_to = os.getenv('EMAIL_TO')
+        self.email_password = os.getenv('EMAIL_PASSWORD')
+        self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+        self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
         
-        logger.info("DataFetcher initialized")
+        # Validate configuration
+        self._validate_config()
+        
+        # Initialize components
+        self.data_fetcher = DataFetcher(self.fred_api_key)
+        self.signal_generator = SignalGenerator(anthropic_api_key=self.anthropic_api_key)
+        self.ai_client = anthropic.Anthropic(api_key=self.anthropic_api_key)
+        
+        logger.info("Simple Macro Agent initialized successfully")
     
-    async def initialize(self):
-        """Initialize HTTP session"""
-        if not self.session:
-            self.session = aiohttp.ClientSession()
+    def _validate_config(self):
+        """Validate required configuration is present"""
+        required_vars = [
+            'FRED_API_KEY', 'ANTHROPIC_API_KEY', 
+            'EMAIL_FROM', 'EMAIL_TO', 'EMAIL_PASSWORD'
+        ]
+        
+        missing = [var for var in required_vars if not os.getenv(var)]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
     
-    async def cleanup(self):
-        """Cleanup HTTP session"""
-        if self.session:
-            await self.session.close()
-    
-    async def get_all_data(self) -> Dict:
-        """Fetch all 4 essential data points with error tracking"""
+    async def get_macro_data(self) -> Dict:
+        """
+        Fetch the 4 essential data points:
+        1. Fed Funds Rate
+        2. 10Y Treasury Yield  
+        3. Latest CPI
+        4. DXY Level
+        
+        Note: Gold price removed - waiting for more accurate API
+        """
         try:
-            await self.initialize()
+            logger.info("Fetching macro data...")
             
-            # Track warnings and errors
-            warnings = []
-            errors = []
+            # Fetch all data points
+            data = await self.data_fetcher.get_all_data()
             
-            # Fetch FRED data with individual error tracking
-            fed_rate, fed_warning = await self.get_fed_funds_rate_with_status()
-            if fed_warning:
-                warnings.append(fed_warning)
+            # Log summary
+            logger.info(f"Data fetched - Fed Rate: {data.get('fed_rate')}%, "
+                       f"DXY: {data.get('dxy_level')}")
             
-            treasury_10y, treasury_warning = await self.get_10y_treasury_with_status()
-            if treasury_warning:
-                warnings.append(treasury_warning)
-            
-            cpi, cpi_warning = await self.get_latest_cpi_with_status()
-            if cpi_warning:
-                warnings.append(cpi_warning)
-            
-            # Fetch market data with error tracking
-            dxy_level, dxy_warning = self.get_dxy_level_with_status()
-            if dxy_warning:
-                warnings.append(dxy_warning)
-            
-            data = {
-                'fed_rate': fed_rate,
-                'treasury_10y': treasury_10y,
-                'cpi': cpi,
-                'dxy_level': dxy_level,
-                'timestamp': datetime.now().isoformat(),
-                'warnings': warnings,  # Track all warnings
-                'has_warnings': len(warnings) > 0
-            }
-            
-            if warnings:
-                logger.warning(f"Data fetched with {len(warnings)} warning(s)")
-                for warning in warnings:
-                    logger.warning(f"  - {warning}")
-            else:
-                logger.info(f"All data fetched successfully: Fed={fed_rate}%, "
-                           f"10Y={treasury_10y}%, CPI={cpi}%, DXY={dxy_level}")
+            # Store to JSON for record keeping
+            self._save_data_snapshot(data)
             
             return data
             
         except Exception as e:
-            logger.error(f"Error fetching data: {e}")
+            logger.error(f"Error fetching macro data: {e}")
             raise
-        finally:
-            await self.cleanup()
     
-    async def _fetch_fred_series(self, series_id: str) -> Optional[float]:
-        """Generic FRED series fetcher"""
+    def _save_data_snapshot(self, data: Dict):
+        """Save data snapshot to JSON file"""
         try:
-            params = {
-                'series_id': series_id,
-                'api_key': self.fred_api_key,
-                'file_type': 'json',
-                'limit': 1,
-                'sort_order': 'desc'
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"data_snapshots/snapshot_{timestamp}.json"
+            
+            os.makedirs("data_snapshots", exist_ok=True)
+            
+            with open(filename, 'w') as f:
+                json.dump({
+                    'timestamp': datetime.now().isoformat(),
+                    'data': data
+                }, f, indent=2)
+                
+        except Exception as e:
+            logger.warning(f"Failed to save data snapshot: {e}")
+    
+    async def generate_daily_analysis(self, data: Dict) -> Dict:
+        """
+        Generate trading signal using simple Fed + DXY logic.
+        Single AI call for complete analysis.
+        """
+        try:
+            logger.info("Generating daily analysis...")
+            
+            # Log the data we received for debugging
+            logger.info(f"Data received: Fed={data.get('fed_rate')}, "
+                       f"DXY={data.get('dxy_level')}, "
+                       f"CPI={data.get('cpi')}, "
+                       f"10Y={data.get('treasury_10y')}")
+            
+            # Generate signal using rule-based logic
+            signal = self.signal_generator.generate_signal(data)
+            logger.info(f"Signal generated: {signal['signal']} (confidence: {signal['confidence']})")
+            
+            # Get AI analysis for reasoning (1 API call)
+            ai_analysis = await self._get_ai_analysis(data, signal)
+            
+            analysis = {
+                'signal': signal['signal'],
+                'bias': signal['bias'],
+                'confidence': signal['confidence'],
+                'reasoning': ai_analysis['reasoning'],
+                'data': data,
+                'timestamp': datetime.now().isoformat()
             }
             
-            url = f"{self.fred_base_url}/series/observations"
+            logger.info(f"Analysis complete - Signal: {signal['signal']}, "
+                       f"Confidence: {signal['confidence']}")
             
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get('observations'):
-                        value = float(data['observations'][0]['value'])
-                        logger.debug(f"FRED {series_id}: {value}")
-                        return value
-                else:
-                    logger.error(f"FRED API error for {series_id}: {response.status}")
-                    return None
-                    
+            return analysis
+            
         except Exception as e:
-            logger.error(f"Error fetching FRED series {series_id}: {e}")
-            return None
+            logger.error(f"Error generating analysis: {e}")
+            raise
     
-    async def get_fed_funds_rate(self) -> float:
-        """Get Federal Funds Rate from FRED"""
-        rate = await self._fetch_fred_series(self.fred_series['fed_funds'])
-        return rate if rate is not None else DEFAULT_VALUES['fed_rate']
+    async def _get_ai_analysis(self, data: Dict, signal: Dict) -> Dict:
+        """
+        Single AI call to provide reasoning for the signal.
+        Focused on practical trading insights.
+        """
+        prompt = f"""
+        You are a professional gold trader analyzing macro conditions.
+        
+        CURRENT MACRO DATA:
+        - Fed Funds Rate: {data.get('fed_rate')}%
+        - 10Y Treasury: {data.get('treasury_10y')}%
+        - Latest CPI: {data.get('cpi')}%
+        - DXY Level: {data.get('dxy_level')}
+        
+        SIGNAL GENERATED: {signal['signal']}
+        BIAS: {signal['bias']}
+        
+        Based on your proven trading approach:
+        - Fed policy is the primary driver of gold over weeks/months
+        - Strong dollar (DXY > 105) usually overrides other bullish factors
+        - Simple directional bias is more reliable than complex analysis
+        
+        Provide a 2-3 sentence explanation of why this signal makes sense
+        in the current macro environment. Focus on:
+        1. What the Fed stance means for gold
+        2. How DXY confirms or conflicts with Fed signal
+        3. The key risk to watch for this trade
+        
+        Be concise and practical. No fluff.
+        """
+        
+        try:
+            message = self.ai_client.messages.create(
+                model=config.CLAUDE_MODEL,  # Use model from config
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            reasoning = message.content[0].text
+            
+            return {
+                'reasoning': reasoning,
+                'api_calls_used': 1
+            }
+            
+        except Exception as e:
+            logger.error(f"AI analysis failed: {e}")
+            return {
+                'reasoning': f"Fed at {data.get('fed_rate')}% with DXY at {data.get('dxy_level')} "
+                            f"suggests {signal['bias'].lower()} bias for gold.",
+                'api_calls_used': 0
+            }
     
-    async def get_fed_funds_rate_with_status(self) -> tuple[float, Optional[str]]:
-        """Get Federal Funds Rate with error status"""
-        rate = await self._fetch_fred_series(self.fred_series['fed_funds'])
-        if rate is not None:
-            return rate, None
+    def send_daily_email(self, analysis: Dict):
+        """Send plain text email with analysis"""
+        try:
+            # Add warning indicator to subject if data issues
+            data = analysis.get('data', {})
+            has_warnings = data.get('has_warnings', False)
+            warning_flag = " ⚠️" if has_warnings else ""
+            
+            subject = f"Gold Signal - {datetime.now().strftime('%Y-%m-%d')} - {analysis['signal']}{warning_flag}"
+            
+            # Build email body
+            body = self._build_email_body(analysis)
+            
+            # Send email
+            self._send_email(subject, body)
+            
+            logger.info(f"Daily email sent successfully to {self.email_to}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send email: {e}")
+            raise
+    
+    def _build_email_body(self, analysis: Dict) -> str:
+        """Build clean email body with just signal and analysis"""
+        data = analysis['data']
+        
+        # Determine DXY strength
+        dxy_level = data.get('dxy_level', 0)
+        if dxy_level > 105:
+            dxy_status = 'Strong'
+        elif dxy_level < 100:
+            dxy_status = 'Weak'
         else:
-            warning = f"Fed Funds Rate unavailable (FRED API), using fallback: {DEFAULT_VALUES['fed_rate']}%"
-            return DEFAULT_VALUES['fed_rate'], warning
+            dxy_status = 'Neutral'
+        
+        body = f"""
+DAILY GOLD MACRO ANALYSIS
+{datetime.now().strftime('%A, %B %d, %Y')}
+"""
+        
+        # Add data warnings section if there are any
+        warnings = data.get('warnings', [])
+        if warnings:
+            body += "\n⚠️  DATA WARNINGS:\n"
+            for warning in warnings:
+                body += f"• {warning}\n"
+            body += "\n"
+        
+        body += f"""
+SIGNAL: {analysis['signal']}
+Confidence: {analysis['confidence']}
+
+MACRO ENVIRONMENT
+• Fed Funds Rate: {data.get('fed_rate')}%
+• Fed Bias: {analysis['bias']}
+• DXY Level: {dxy_level} ({dxy_status} vs gold)
+• 10Y Treasury: {data.get('treasury_10y')}%
+• Latest CPI: {data.get('cpi')}%
+
+ANALYSIS
+{analysis['reasoning']}
+
+---
+Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Note: Gold price data temporarily unavailable - awaiting more accurate API source.
+"""
+        
+        return body
     
-    async def get_10y_treasury(self) -> float:
-        """Get 10-Year Treasury Yield from FRED"""
-        yield_10y = await self._fetch_fred_series(self.fred_series['treasury_10y'])
-        return yield_10y if yield_10y is not None else DEFAULT_VALUES['treasury_10y']
+    def _send_email(self, subject: str, body: str):
+        """Send email via SMTP"""
+        msg = MIMEMultipart()
+        msg['From'] = self.email_from
+        msg['To'] = self.email_to
+        msg['Subject'] = subject
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+            server.starttls()
+            server.login(self.email_from, self.email_password)
+            server.send_message(msg)
     
-    async def get_10y_treasury_with_status(self) -> tuple[float, Optional[str]]:
-        """Get 10-Year Treasury with error status"""
-        yield_10y = await self._fetch_fred_series(self.fred_series['treasury_10y'])
-        if yield_10y is not None:
-            return yield_10y, None
-        else:
-            warning = f"10Y Treasury unavailable (FRED API), using fallback: {DEFAULT_VALUES['treasury_10y']}%"
-            return DEFAULT_VALUES['treasury_10y'], warning
-    
-    async def get_latest_cpi(self) -> float:
-        """Get latest CPI YoY from FRED"""
+    async def run_daily(self):
+        """Execute daily analysis and send email"""
         try:
-            # Get CPI data for YoY calculation
-            params = {
-                'series_id': self.fred_series['cpi'],
-                'api_key': self.fred_api_key,
-                'file_type': 'json',
-                'limit': 13,  # Need 13 months for YoY
-                'sort_order': 'desc'
-            }
+            logger.info("=" * 50)
+            logger.info("Starting daily macro analysis run")
             
-            url = f"{self.fred_base_url}/series/observations"
+            # 1. Fetch data
+            data = await self.get_macro_data()
             
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    observations = data.get('observations', [])
-                    
-                    if len(observations) >= 13:
-                        latest = float(observations[0]['value'])
-                        year_ago = float(observations[12]['value'])
-                        cpi_yoy = ((latest / year_ago) - 1) * 100
-                        logger.debug(f"CPI YoY: {cpi_yoy:.1f}%")
-                        return round(cpi_yoy, 1)
-                    
-            return DEFAULT_VALUES['cpi']
+            # 2. Generate analysis
+            analysis = await self.generate_daily_analysis(data)
+            
+            # 3. Send email
+            self.send_daily_email(analysis)
+            
+            logger.info("Daily run completed successfully")
+            logger.info("=" * 50)
+            
+            return analysis
             
         except Exception as e:
-            logger.error(f"Error calculating CPI YoY: {e}")
-            return DEFAULT_VALUES['cpi']
-    
-    async def get_latest_cpi_with_status(self) -> tuple[float, Optional[str]]:
-        """Get latest CPI with error status"""
-        try:
-            params = {
-                'series_id': self.fred_series['cpi'],
-                'api_key': self.fred_api_key,
-                'file_type': 'json',
-                'limit': 13,
-                'sort_order': 'desc'
-            }
+            logger.error(f"Daily run failed: {e}")
             
-            url = f"{self.fred_base_url}/series/observations"
-            
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    observations = data.get('observations', [])
-                    
-                    if len(observations) >= 13:
-                        latest = float(observations[0]['value'])
-                        year_ago = float(observations[12]['value'])
-                        cpi_yoy = ((latest / year_ago) - 1) * 100
-                        return round(cpi_yoy, 1), None
-            
-            warning = f"CPI data unavailable (FRED API), using fallback: {DEFAULT_VALUES['cpi']}%"
-            return DEFAULT_VALUES['cpi'], warning
-            
-        except Exception as e:
-            logger.error(f"Error calculating CPI YoY: {e}")
-            warning = f"CPI calculation failed ({str(e)}), using fallback: {DEFAULT_VALUES['cpi']}%"
-            return DEFAULT_VALUES['cpi'], warning
-    
-    def get_dxy_level(self) -> float:
-        """Get current DXY level from Yahoo Finance with multiple ticker attempts"""
-        # Try multiple USD index tickers
-        dxy_tickers = [
-            "DX-Y.NYB",  # Full ticker
-            "DXY",       # Try simple DXY first
-            "UUP",       # USD ETF as proxy
-            "USDU",      # Another USD ETF
-        ]
-        
-        for ticker in dxy_tickers:
+            # Send error notification
             try:
-                time.sleep(YAHOO_DELAY)  # Add delay to avoid rate limits
-                
-                logger.debug(f"Trying DXY ticker: {ticker}")
-                data = yf.download(ticker, period="5d", interval="1d", progress=False)
-                
-                if not data.empty and len(data) > 0:
-                    level = float(data['Close'].iloc[-1])
-                    
-                    # Adjust for ETFs (they track DXY but at different scales)
-                    if ticker == "UUP":
-                        level = level * 3.7  # UUP to DXY approximate conversion
-                    elif ticker == "USDU":
-                        level = level * 3.9  # USDU to DXY approximate conversion
-                    
-                    logger.info(f"DXY level from {ticker}: {level:.2f}")
-                    return round(level, 2)
-                    
-            except Exception as e:
-                logger.warning(f"Failed to fetch {ticker}: {e}")
-                continue
-        
-        # If all fail, use fallback
-        logger.warning("All DXY tickers failed, using fallback value")
-        return DEFAULT_VALUES['dxy_level']
+                self._send_email(
+                    "Gold Signal - ERROR",
+                    f"The daily analysis failed with error:\n\n{str(e)}\n\nPlease check the system."
+                )
+            except:
+                pass
+            
+            raise
     
-    def get_dxy_level_with_status(self) -> tuple[float, Optional[str]]:
-        """Get DXY level with error status"""
-        dxy_tickers = ["DX-Y.NYB", "DXY", "UUP", "USDU"]
+    async def run_scheduler(self):
+        """Run the agent on schedule (8 AM Sydney time daily)"""
+        logger.info("Macro Agent scheduler started")
+        logger.info("Will run daily at 8:00 AM Sydney time")
         
-        for ticker in dxy_tickers:
+        while True:
+            now = datetime.now()
+            
+            # Calculate next 8 AM Sydney time
+            target_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            if now >= target_time:
+                target_time = target_time.replace(day=target_time.day + 1)
+            
+            # Wait until target time
+            wait_seconds = (target_time - now).total_seconds()
+            logger.info(f"Next run in {wait_seconds/3600:.1f} hours")
+            
+            await asyncio.sleep(wait_seconds)
+            
+            # Run daily analysis
             try:
-                time.sleep(YAHOO_DELAY)
-                logger.debug(f"Trying DXY ticker: {ticker}")
-                data = yf.download(ticker, period="5d", interval="1d", progress=False)
-                
-                if not data.empty and len(data) > 0:
-                    level = float(data['Close'].iloc[-1])
-                    
-                    if ticker == "UUP":
-                        level = level * 3.7
-                    elif ticker == "USDU":
-                        level = level * 3.9
-                    
-                    logger.info(f"DXY level from {ticker}: {level:.2f}")
-                    return round(level, 2), None
-                    
+                await self.run_daily()
             except Exception as e:
-                logger.warning(f"Failed to fetch {ticker}: {e}")
-                continue
-        
-        warning = f"DXY level unavailable (Yahoo Finance timeout/error), using fallback: {DEFAULT_VALUES['dxy_level']}"
-        logger.warning(warning)
-        return DEFAULT_VALUES['dxy_level'], warning
+                logger.error(f"Scheduled run failed: {e}")
+            
+            # Wait a minute to avoid double runs
+            await asyncio.sleep(60)
 
 
-class FREDConnector:
-    """Simplified FRED connector for backwards compatibility"""
+async def main():
+    """Main entry point"""
+    agent = SimpleMacroAgent()
     
-    def __init__(self, api_key: str):
-        self.fetcher = DataFetcher(api_key)
+    # Run once immediately for testing
+    # await agent.run_daily()
     
-    async def get_fed_funds_rate(self) -> float:
-        await self.fetcher.initialize()
-        result = await self.fetcher.get_fed_funds_rate()
-        await self.fetcher.cleanup()
-        return result
-    
-    async def get_10y_treasury(self) -> float:
-        await self.fetcher.initialize()
-        result = await self.fetcher.get_10y_treasury()
-        await self.fetcher.cleanup()
-        return result
-    
-    async def get_latest_cpi(self) -> float:
-        await self.fetcher.initialize()
-        result = await self.fetcher.get_latest_cpi()
-        await self.fetcher.cleanup()
-        return result
+    # Then run on schedule
+    await agent.run_scheduler()
 
 
-class YahooConnector:
-    """Simplified Yahoo Finance connector for backwards compatibility"""
-    
-    @staticmethod
-    def get_dxy_level() -> float:
-        fetcher = DataFetcher("")
-        return fetcher.get_dxy_level()
+if __name__ == "__main__":
+    asyncio.run(main())
